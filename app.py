@@ -5,10 +5,11 @@ import calendar
 from supabase import create_client, Client
 
 # --- 配置区 ---
-st.set_page_config(page_title="科研设施预约系统", layout="wide") # 页面改宽一点，方便看日历
+# 1. 更改了系统名称
+st.set_page_config(page_title="农生学院气候室预约系统", layout="wide") 
 ADMIN_PASSWORD = "kexueyuan2026"
+MAX_USER_DAYS = 120 # 新增：每个人或手机号最多可预约的总天数
 
-# 定义不同房间的最大容量（重点修改：不同房间不同容量）
 ROOM_CAPACITIES = {
     "1号人工气候室": 5,
     "2号人工气候室": 5,
@@ -35,8 +36,9 @@ def delete_record(record_id):
     supabase.table("reservations").delete().eq("id", record_id).execute()
 
 def check_capacity(room, req_start, req_end, data):
+    """检查场地同一天的总容量"""
     current_date = req_start
-    max_cap = ROOM_CAPACITIES[room] # 获取对应房间的容量限制
+    max_cap = ROOM_CAPACITIES[room]
     
     while current_date <= req_end:
         daily_count = 0
@@ -54,8 +56,28 @@ def check_capacity(room, req_start, req_end, data):
         current_date += timedelta(days=1)
     return False, None
 
+def check_user_quota(user_name, phone, req_start, req_end, data):
+    """新增：检查该用户（姓名或手机号）的历史总预约天数是否超标"""
+    req_days = (req_end - req_start).days + 1
+    existing_days = 0
+    
+    for record in data:
+        if record.get("status") in ["待审批", "已通过"]:
+            # 如果名字相同，或者手机号相同，都算作同一个人的额度
+            if record.get("user") == user_name or record.get("phone") == phone:
+                try:
+                    rec_start = datetime.strptime(record["start_date"], "%Y-%m-%d").date()
+                    rec_end = datetime.strptime(record["end_date"], "%Y-%m-%d").date()
+                    existing_days += (rec_end - rec_start).days + 1
+                except:
+                    continue
+                    
+    if existing_days + req_days > MAX_USER_DAYS:
+        return True, existing_days
+    return False, existing_days
+
 # --- 界面区 ---
-st.title("🌱 科研设施在线预约系统")
+st.title("🌱 农生学院气候室预约系统")
 
 reservations = load_data()
 tab1, tab2, tab3 = st.tabs(["📝 提交预约", "📅 预约状态与日历", "👨‍💼 管理员后台"])
@@ -65,49 +87,59 @@ with tab1:
     st.subheader("填写预约信息")
     with st.form("reservation_form"):
         user_name = st.text_input("预约人姓名/课题组", placeholder="例如：张三 / 李四课题组")
-        phone_number = st.text_input("联系手机号码", placeholder="例如：13800138000") 
-        # 新增选项：工务署玻璃温室
+        # 提示用户手机号是必填的
+        phone_number = st.text_input("联系手机号码 (必填)", placeholder="例如：13800138000") 
         room_choice = st.selectbox("选择预约场地", list(ROOM_CAPACITIES.keys()))
         dates = st.date_input("选择使用日期区间", [])
+        
+        st.info(f"💡 规则提示：每人（同姓名或同手机号）累计最多允许预约 **{MAX_USER_DAYS}** 天。")
         submitted = st.form_submit_button("提交申请")
         
         if submitted:
             if not user_name:
                 st.warning("⚠️ 请填写预约人姓名！")
             elif not phone_number:
-                st.warning("⚠️ 请填写联系手机号码！")
+                st.warning("⚠️ 必须填写联系手机号码才能进行预约！")
             elif len(dates) == 0:
                 st.warning("⚠️ 请选择预约日期！")
             else:
                 start_date = dates[0]
                 end_date = dates[1] if len(dates) > 1 else dates[0]
                 
-                is_full, conflict_date = check_capacity(room_choice, start_date, end_date, reservations)
+                # 1. 检查个人额度是否超标
+                is_quota_exceeded, used_days = check_user_quota(user_name, phone_number, start_date, end_date, reservations)
                 
-                if is_full:
-                    formatted_date = conflict_date.strftime("%Y年%m月%d日")
-                    limit = ROOM_CAPACITIES[room_choice]
-                    st.error(f"❌ 抱歉，{room_choice} 在 **{formatted_date}** 的预约名额（{limit}人）已满！")
+                if is_quota_exceeded:
+                    req_days = (end_date - start_date).days + 1
+                    st.error(f"❌ 额度不足！您之前已占用 {used_days} 天，本次申请 {req_days} 天，总和超过了最高 {MAX_USER_DAYS} 天的限制。")
                 else:
-                    new_record = {
-                        "user": user_name,
-                        "phone": phone_number,
-                        "room": room_choice,
-                        "start_date": start_date.strftime("%Y-%m-%d"),
-                        "end_date": end_date.strftime("%Y-%m-%d"),
-                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "status": "待审批",
-                        "reject_reason": "无"
-                    }
-                    insert_record(new_record)
-                    st.success(f"✅ 申请已提交！当前状态为【待审批】。")
-                    st.rerun()
+                    # 2. 检查场地容量是否满载
+                    is_full, conflict_date = check_capacity(room_choice, start_date, end_date, reservations)
+                    
+                    if is_full:
+                        formatted_date = conflict_date.strftime("%Y年%m月%d日")
+                        limit = ROOM_CAPACITIES[room_choice]
+                        st.error(f"❌ 抱歉，{room_choice} 在 **{formatted_date}** 的预约名额（{limit}人）已满！")
+                    else:
+                        # 验证全部通过，写入数据库
+                        new_record = {
+                            "user": user_name,
+                            "phone": phone_number,
+                            "room": room_choice,
+                            "start_date": start_date.strftime("%Y-%m-%d"),
+                            "end_date": end_date.strftime("%Y-%m-%d"),
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "status": "待审批",
+                            "reject_reason": "无"
+                        }
+                        insert_record(new_record)
+                        st.success(f"✅ 申请已提交！当前状态为【待审批】。")
+                        st.rerun()
 
 # --- Tab 2: 预约状态与日历 ---
 with tab2:
-    st.subheader("📅 当月余量日历看板")
+    st.subheader("📅 当月余量及人员看板")
     
-    # 1. 月份选择器
     today = datetime.now()
     col_year, col_month, _ = st.columns([1, 1, 3])
     with col_year:
@@ -115,9 +147,9 @@ with tab2:
     with col_month:
         sel_month = st.selectbox("选择月份", range(1, 13), index=today.month - 1)
         
-    # 2. 计算所选月份每一天的预约人数
-    # usage_dict 结构: { 日期(1-31): {"1号人工气候室": 2, "工务署玻璃温室": 5...} }
-    usage_dict = {day: {r: 0 for r in ROOM_CAPACITIES} for day in range(1, 32)}
+    # 结构: { 日期: { "1号气候室": {"count": 2, "users": ["张三", "李四"]} } }
+    usage_dict = {day: {r: {"count": 0, "users": []} for r in ROOM_CAPACITIES} for day in range(1, 32)}
+    
     for r in reservations:
         if r.get("status") in ["待审批", "已通过"]:
             try:
@@ -126,47 +158,50 @@ with tab2:
                 curr_d = s_date
                 while curr_d <= e_date:
                     if curr_d.year == sel_year and curr_d.month == sel_month:
-                        usage_dict[curr_d.day][r["room"]] += 1
+                        # 人数 +1
+                        usage_dict[curr_d.day][r["room"]]["count"] += 1
+                        # 把名字加到日历名单里
+                        if r["user"] not in usage_dict[curr_d.day][r["room"]]["users"]:
+                            usage_dict[curr_d.day][r["room"]]["users"].append(r["user"])
                     curr_d += timedelta(days=1)
             except:
                 continue
 
-    # 3. 绘制日历网格
     cal = calendar.monthcalendar(sel_year, sel_month)
     weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
     
-    # 画表头
     header_cols = st.columns(7)
     for idx, day_name in enumerate(weekdays):
         header_cols[idx].markdown(f"**{day_name}**")
         
     st.markdown("---")
     
-    # 画每一天的小方块
     for week in cal:
         day_cols = st.columns(7)
         for i, day in enumerate(week):
             if day == 0:
-                day_cols[i].write("") # 空白日期
+                day_cols[i].write("") 
             else:
                 with day_cols[i]:
-                    # 也可以用 st.container(border=True) 画个边框
                     with st.container(border=True):
                         st.markdown(f"**{sel_month}月{day}日**")
-                        # 遍历每一个房间显示状态
                         for room, max_cap in ROOM_CAPACITIES.items():
-                            booked = usage_dict[day][room]
-                            # 根据占用率显示不同颜色
+                            booked = usage_dict[day][room]["count"]
+                            # 把名字列表用顿号连起来
+                            users_str = "、".join(usage_dict[day][room]["users"])
+                            
+                            # 如果有人预约，则在下方用灰色小字显示名字
+                            name_display = f"<br><span style='color:gray; font-size:11px; line-height:1.2; display:block;'>👤 {users_str}</span>" if booked > 0 else ""
+                            
                             if booked >= max_cap:
-                                st.markdown(f"<span style='color:red; font-size:13px;'>🔴 {room}: 满({booked}/{max_cap})</span>", unsafe_allow_html=True)
+                                st.markdown(f"<span style='color:red; font-size:13px;'>🔴 {room}: 满({booked}/{max_cap})</span>{name_display}", unsafe_allow_html=True)
                             elif booked > 0:
-                                st.markdown(f"<span style='color:#FF8C00; font-size:13px;'>🟡 {room}: {booked}/{max_cap}</span>", unsafe_allow_html=True)
+                                st.markdown(f"<span style='color:#FF8C00; font-size:13px;'>🟡 {room}: {booked}/{max_cap}</span>{name_display}", unsafe_allow_html=True)
                             else:
                                 st.markdown(f"<span style='color:green; font-size:13px;'>🟢 {room}: 空({booked}/{max_cap})</span>", unsafe_allow_html=True)
 
     st.markdown("---")
     
-    # 4. 保留原来的详细列表
     with st.expander("点击查看：📝 所有详细预约记录列表"):
         if reservations:
             df_data = []
