@@ -105,6 +105,30 @@ tab1, tab2, tab3 = st.tabs(["📝 提交预约", "📅 预约状态与日历", "
 # --- Tab 1: 提交预约 ---
 with tab1:
     st.subheader("填写预约信息")
+    
+    # 新增：预约成功后的悬停弹窗提示与下载按钮
+    if st.session_state.get('show_download_prompt'):
+        st.success(f"✅ 线上申请已提交！您预约了 【{st.session_state.get('last_booked_room')}】，当前状态为【待审批】。")
+        st.info("⚠️ **下一步重要操作：**\n\n请务必下载下方的《预约申请表》，填写相关信息并签字后，提交至：\n\n**📍 1010办公室 彭宇涛 老师 （18996131636）**")
+        
+        try:
+            # 核心修改：这里改成了读取 .pdf 文件
+            with open("application_form.pdf", "rb") as file:
+                st.download_button(
+                    label="⬇️ 点击下载《预约申请表》PDF版",  # 按钮文字更新
+                    data=file,
+                    file_name="农生学院气候室预约申请表.pdf",   # 下载后的文件名更新
+                    mime="application/pdf"                    # 文件识别码改为 PDF
+                )
+        except FileNotFoundError:
+            st.error("⚠️ 提示：系统找不到 'application_form.pdf' 文件，请联系管理员确认是否已上传至后台。")
+            
+        if st.button("👌 我已了解并下载，关闭此提示"):
+            st.session_state['show_download_prompt'] = False
+            st.rerun()
+            
+        st.markdown("---")
+        
     with st.form("reservation_form"):
         user_name = st.text_input("预约人姓名/课题组", placeholder="例如：张三 / 李四课题组")
         phone_number = st.text_input("联系手机号码 (必填)", placeholder="例如：13800138000") 
@@ -157,10 +181,12 @@ with tab1:
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "status": "待审批",
                             "reject_reason": "无",
-                            "cancelled_dates": "" # 默认没有被单独取消的日期
+                            "cancelled_dates": ""
                         }
                         insert_record(new_record)
-                        st.success(f"✅ 申请已提交！您预约了 【{room_choice}】，当前状态为【待审批】。")
+                        
+                        st.session_state['show_download_prompt'] = True
+                        st.session_state['last_booked_room'] = room_choice
                         st.rerun()
 
 # --- Tab 2: 预约状态与日历 ---
@@ -345,3 +371,4 @@ with tab3:
                         st.write("日期数据异常，无法展开详细管理。")
     elif pwd != "":
         st.error("密码错误！")
+
