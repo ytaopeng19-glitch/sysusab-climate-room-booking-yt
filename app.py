@@ -15,7 +15,8 @@ BASE_ROOMS = {
     "工务署玻璃温室": 20
 }
 
-b114c_racks_list = [f"{i}号培养架" for i in range(1, 43)] + [
+# 变量名修改为 B114A
+b114a_racks_list = [f"{i}号培养架" for i in range(1, 43)] + [
     "143号培养架", "155号培养架", "166号培养架", 
     "177号培养架", "188号培养架", "199号培养架", 
     "211号培养架", "222号培养架"
@@ -23,8 +24,9 @@ b114c_racks_list = [f"{i}号培养架" for i in range(1, 43)] + [
 
 ROOM_CAPACITIES = BASE_ROOMS.copy()
 RACK_CAPACITY = 1  
-for rack in b114c_racks_list:
-    ROOM_CAPACITIES[f"B114C-{rack}"] = RACK_CAPACITY
+for rack in b114a_racks_list:
+    # 场地前缀修改为 B114A
+    ROOM_CAPACITIES[f"B114A-{rack}"] = RACK_CAPACITY
 
 # --- 数据库连接初始化 ---
 url: str = st.secrets["SUPABASE_URL"]
@@ -250,7 +252,9 @@ with tab2:
                                 day_has_booking = True
                                 users_str = "、".join(usage_dict[day][room]["users"])
                                 name_display = f"<br><span style='color:gray; font-size:11px; line-height:1.2; display:block;'>👤 {users_str}</span>"
-                                display_name = room.replace("B114C-", "[B114C] ")
+                                
+                                # 日历显示文本中的 B114C 修改为 B114A
+                                display_name = room.replace("B114A-", "[B114A] ")
                                 
                                 if booked >= max_cap:
                                     st.markdown(f"<span style='color:red; font-size:12px;'>🔴 {display_name}: 满({booked}/{max_cap})</span>{name_display}", unsafe_allow_html=True)
