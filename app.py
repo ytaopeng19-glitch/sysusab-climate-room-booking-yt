@@ -5,7 +5,7 @@ import calendar
 from supabase import create_client, Client
 
 # --- 配置区 ---
-st.set_page_config(page_title="农生学院气候室预约系统", layout="wide") 
+st.set_page_config(page_title="农生学院气候室及培养架在线预约系统", layout="wide") 
 ADMIN_PASSWORD = "kexueyuan2026"
 MAX_USER_DAYS = 120 
 
@@ -371,4 +371,5 @@ with tab3:
                         st.write("日期数据异常，无法展开详细管理。")
     elif pwd != "":
         st.error("密码错误！")
+
 
