@@ -17,7 +17,6 @@ BASE_ROOMS = {
 }
 
 # 2. 动态生成 B114C 房间的培养架列表
-# 包括 1-42号，以及特定的几个大号架子
 b114c_racks_list = [f"{i}号培养架" for i in range(1, 43)] + [
     "143号培养架", "155号培养架", "166号培养架", 
     "177号培养架", "188号培养架", "199号培养架", 
@@ -103,10 +102,10 @@ with tab1:
             list(ROOM_CAPACITIES.keys())
         )
         
-        # 优化 1：在日期选择器上增加醒目的 24:00 规则提示语
         dates = st.date_input("选择使用日期区间 (注：结束日期默认至当晚24:00，下一位同学需从次日0:00开始预约)", [])
         
-        st.info(f"💡 规则提示：为保证公共资源的合理高效利用，避免公共资源长时间被占用。每人（同姓名或同手机号）在线预约天数，合计不能超过 **{MAX_USER_DAYS}** 天。")
+        # 💡 核心修改点 1：把你的原话变成了非常醒目的官方规则提示
+        st.info(f"💡 **管理规定**：为保证公共资源的合理高效利用，避免公共资源长时间被占用，每人（同姓名或同手机号）在线预约天数，合计不能超过 **{MAX_USER_DAYS}** 天。")
         submitted = st.form_submit_button("提交申请")
         
         if submitted:
@@ -124,7 +123,8 @@ with tab1:
                 
                 if is_quota_exceeded:
                     req_days = (end_date - start_date).days + 1
-                    st.error(f"❌ 额度不足！您之前已占用 {used_days} 天，本次申请 {req_days} 天，超过了最高 {MAX_USER_DAYS} 天。")
+                    # 💡 核心修改点 2：如果有人违规超发，系统不仅会拦截，还会用官方口吻报错
+                    st.error(f"❌ **额度超限拦截**：为保证公共资源的合理高效利用，每人最多预约 {MAX_USER_DAYS} 天！您之前已占用 {used_days} 天，本次申请 {req_days} 天，合计已超过上限。")
                 else:
                     is_full, conflict_date = check_capacity(room_choice, start_date, end_date, reservations)
                     
@@ -132,11 +132,10 @@ with tab1:
                         formatted_date = conflict_date.strftime("%Y年%m月%d日")
                         limit = ROOM_CAPACITIES[room_choice]
                         
-                        # 优化 2：报错信息更加智能，直接告诉同学应该从哪一天开始预约
                         next_day = (conflict_date + timedelta(days=1)).strftime("%Y年%m月%d日")
-                        if limit == 1: # 针对培养架的专属报错语
+                        if limit == 1: 
                             st.error(f"❌ 冲突！【{room_choice}】在 **{formatted_date}** 尚未到期（被占用至当日24:00）。请将您的起始日期延后至 **{next_day}** 或更晚。")
-                        else: # 针对气候室的报错语
+                        else: 
                             st.error(f"❌ 抱歉，【{room_choice}】在 **{formatted_date}** 的预约名额（{limit}人）已满！请避开此日期。")
                     else:
                         new_record = {
@@ -152,7 +151,7 @@ with tab1:
                         insert_record(new_record)
                         st.success(f"✅ 申请已提交！您预约了 【{room_choice}】，当前状态为【待审批】。")
                         st.rerun()
-                        
+
 # --- Tab 2: 预约状态与日历 ---
 with tab2:
     st.subheader("📅 当月余量及人员看板")
@@ -174,7 +173,6 @@ with tab2:
                 curr_d = s_date
                 while curr_d <= e_date:
                     if curr_d.year == sel_year and curr_d.month == sel_month:
-                        # 兼容处理：确保旧数据如果不在新字典里不会报错
                         if r["room"] in usage_dict[curr_d.day]:
                             usage_dict[curr_d.day][r["room"]]["count"] += 1
                             if r["user"] not in usage_dict[curr_d.day][r["room"]]["users"]:
@@ -202,19 +200,16 @@ with tab2:
                     with st.container(border=True):
                         st.markdown(f"**{sel_month}月{day}日**")
                         
-                        # 新增逻辑：检查今天是否有任何场地被预约
                         day_has_booking = False 
                         
                         for room, max_cap in ROOM_CAPACITIES.items():
                             booked = usage_dict[day][room]["count"]
                             
-                            # 核心修改：只有 booked > 0 (有人预约) 才显示出来
                             if booked > 0:
                                 day_has_booking = True
                                 users_str = "、".join(usage_dict[day][room]["users"])
                                 name_display = f"<br><span style='color:gray; font-size:11px; line-height:1.2; display:block;'>👤 {users_str}</span>"
                                 
-                                # 为了显示美观，如果是培养架，把前缀修饰一下
                                 display_name = room.replace("B114C-", "[B114C] ")
                                 
                                 if booked >= max_cap:
@@ -222,7 +217,6 @@ with tab2:
                                 else:
                                     st.markdown(f"<span style='color:#FF8C00; font-size:12px;'>🟡 {display_name}: {booked}/{max_cap}</span>{name_display}", unsafe_allow_html=True)
                                     
-                        # 如果遍历完所有场地，发现一个预约都没有，就显示空闲
                         if not day_has_booking:
                             st.markdown("<span style='color:green; font-size:12px;'>🟢 今日全场地空闲</span>", unsafe_allow_html=True)
 
@@ -299,7 +293,3 @@ with tab3:
                     st.markdown("---")
     elif pwd != "":
         st.error("密码错误！")
-
-
-
-
