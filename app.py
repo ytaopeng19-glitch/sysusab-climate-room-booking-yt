@@ -98,14 +98,13 @@ with tab1:
         user_name = st.text_input("预约人姓名/课题组", placeholder="例如：张三 / 李四课题组")
         phone_number = st.text_input("联系手机号码 (必填)", placeholder="例如：13800138000") 
         
-        # 核心修复：取消 radio，改为单一的可搜索下拉框
-        # ROOM_CAPACITIES.keys() 里已经包含了所有的场地和培养架
         room_choice = st.selectbox(
             "选择具体场地（💡 支持直接键盘打字搜索，如输入 '143'）：", 
             list(ROOM_CAPACITIES.keys())
         )
-            
-        dates = st.date_input("选择使用日期区间", [])
+        
+        # 优化 1：在日期选择器上增加醒目的 24:00 规则提示语
+        dates = st.date_input("选择使用日期区间 (注：结束日期默认至当晚24:00，下一位同学需从次日0:00开始预约)", [])
         
         st.info(f"💡 规则提示：每人（同姓名或同手机号）累计最多允许预约 **{MAX_USER_DAYS}** 天。")
         submitted = st.form_submit_button("提交申请")
@@ -132,7 +131,13 @@ with tab1:
                     if is_full:
                         formatted_date = conflict_date.strftime("%Y年%m月%d日")
                         limit = ROOM_CAPACITIES[room_choice]
-                        st.error(f"❌ 抱歉，场地 【{room_choice}】 在 **{formatted_date}** 的预约名额（{limit}人）已满！")
+                        
+                        # 优化 2：报错信息更加智能，直接告诉同学应该从哪一天开始预约
+                        next_day = (conflict_date + timedelta(days=1)).strftime("%Y年%m月%d日")
+                        if limit == 1: # 针对培养架的专属报错语
+                            st.error(f"❌ 冲突！【{room_choice}】在 **{formatted_date}** 尚未到期（被占用至当日24:00）。请将您的起始日期延后至 **{next_day}** 或更晚。")
+                        else: # 针对气候室的报错语
+                            st.error(f"❌ 抱歉，【{room_choice}】在 **{formatted_date}** 的预约名额（{limit}人）已满！请避开此日期。")
                     else:
                         new_record = {
                             "user": user_name,
@@ -294,4 +299,5 @@ with tab3:
                     st.markdown("---")
     elif pwd != "":
         st.error("密码错误！")
+
 
