@@ -9,23 +9,20 @@ st.set_page_config(page_title="农生学院气候室预约系统", layout="wide"
 ADMIN_PASSWORD = "kexueyuan2026"
 MAX_USER_DAYS = 120 
 
-# 1. 定义基础场地和它们的容量
 BASE_ROOMS = {
     "1号人工气候室": 5,
     "2号人工气候室": 5,
     "工务署玻璃温室": 20
 }
 
-# 2. 动态生成 B114C 房间的培养架列表
 b114c_racks_list = [f"{i}号培养架" for i in range(1, 43)] + [
     "143号培养架", "155号培养架", "166号培养架", 
     "177号培养架", "188号培养架", "199号培养架", 
     "211号培养架", "222号培养架"
 ]
 
-# 3. 将所有场地合并到一个总字典中，用于后台校验
 ROOM_CAPACITIES = BASE_ROOMS.copy()
-RACK_CAPACITY = 1  # 设定每个独立的培养架最多允许 1 人预约
+RACK_CAPACITY = 1  
 for rack in b114c_racks_list:
     ROOM_CAPACITIES[f"B114C-{rack}"] = RACK_CAPACITY
 
@@ -48,6 +45,10 @@ def update_status(record_id, new_status, reason="无"):
 def delete_record(record_id):
     supabase.table("reservations").delete().eq("id", record_id).execute()
 
+# 新增：保存被单独取消的日期
+def update_cancelled_dates(record_id, cancelled_dates_str):
+    supabase.table("reservations").update({"cancelled_dates": cancelled_dates_str}).eq("id", record_id).execute()
+
 def check_capacity(room, req_start, req_end, data):
     current_date = req_start
     max_cap = ROOM_CAPACITIES[room]
@@ -56,6 +57,11 @@ def check_capacity(room, req_start, req_end, data):
         daily_count = 0
         for record in data:
             if record["room"] == room and record.get("status") in ["待审批", "已通过"]:
+                # 排除被管理员单独取消的日期
+                cancelled = record.get("cancelled_dates") or ""
+                if current_date.strftime("%Y-%m-%d") in cancelled:
+                    continue
+                    
                 try:
                     rec_start = datetime.strptime(record["start_date"], "%Y-%m-%d").date()
                     rec_end = datetime.strptime(record["end_date"], "%Y-%m-%d").date()
@@ -74,10 +80,16 @@ def check_user_quota(user_name, phone, req_start, req_end, data):
     for record in data:
         if record.get("status") in ["待审批", "已通过"]:
             if record.get("user") == user_name or record.get("phone") == phone:
+                cancelled = record.get("cancelled_dates") or ""
                 try:
                     rec_start = datetime.strptime(record["start_date"], "%Y-%m-%d").date()
                     rec_end = datetime.strptime(record["end_date"], "%Y-%m-%d").date()
-                    existing_days += (rec_end - rec_start).days + 1
+                    curr_d = rec_start
+                    while curr_d <= rec_end:
+                        # 动态计算天数时，扣除被取消的日期
+                        if curr_d.strftime("%Y-%m-%d") not in cancelled:
+                            existing_days += 1
+                        curr_d += timedelta(days=1)
                 except:
                     continue
     if existing_days + req_days > MAX_USER_DAYS:
@@ -104,7 +116,6 @@ with tab1:
         
         dates = st.date_input("选择使用日期区间 (注：结束日期默认至当晚24:00，下一位同学需从次日0:00开始预约)", [])
         
-        # 💡 核心修改点 1：把你的原话变成了非常醒目的官方规则提示
         st.info(f"💡 **管理规定**：为保证公共资源的合理高效利用，避免公共资源长时间被占用，每人（同姓名或同手机号）在线预约天数，合计不能超过 **{MAX_USER_DAYS}** 天。")
         submitted = st.form_submit_button("提交申请")
         
@@ -123,7 +134,6 @@ with tab1:
                 
                 if is_quota_exceeded:
                     req_days = (end_date - start_date).days + 1
-                    # 💡 核心修改点 2：如果有人违规超发，系统不仅会拦截，还会用官方口吻报错
                     st.error(f"❌ **额度超限拦截**：为保证公共资源的合理高效利用，每人最多预约 {MAX_USER_DAYS} 天！您之前已占用 {used_days} 天，本次申请 {req_days} 天，合计已超过上限。")
                 else:
                     is_full, conflict_date = check_capacity(room_choice, start_date, end_date, reservations)
@@ -146,7 +156,8 @@ with tab1:
                             "end_date": end_date.strftime("%Y-%m-%d"),
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "status": "待审批",
-                            "reject_reason": "无"
+                            "reject_reason": "无",
+                            "cancelled_dates": "" # 默认没有被单独取消的日期
                         }
                         insert_record(new_record)
                         st.success(f"✅ 申请已提交！您预约了 【{room_choice}】，当前状态为【待审批】。")
@@ -170,13 +181,17 @@ with tab2:
             try:
                 s_date = datetime.strptime(r["start_date"], "%Y-%m-%d").date()
                 e_date = datetime.strptime(r["end_date"], "%Y-%m-%d").date()
+                cancelled = r.get("cancelled_dates") or "" # 获取该记录被取消的日期
+                
                 curr_d = s_date
                 while curr_d <= e_date:
-                    if curr_d.year == sel_year and curr_d.month == sel_month:
-                        if r["room"] in usage_dict[curr_d.day]:
-                            usage_dict[curr_d.day][r["room"]]["count"] += 1
-                            if r["user"] not in usage_dict[curr_d.day][r["room"]]["users"]:
-                                usage_dict[curr_d.day][r["room"]]["users"].append(r["user"])
+                    # 如果这一天没有被取消，才在日历上显示并计数
+                    if curr_d.strftime("%Y-%m-%d") not in cancelled:
+                        if curr_d.year == sel_year and curr_d.month == sel_month:
+                            if r["room"] in usage_dict[curr_d.day]:
+                                usage_dict[curr_d.day][r["room"]]["count"] += 1
+                                if r["user"] not in usage_dict[curr_d.day][r["room"]]["users"]:
+                                    usage_dict[curr_d.day][r["room"]]["users"].append(r["user"])
                     curr_d += timedelta(days=1)
             except:
                 continue
@@ -209,7 +224,6 @@ with tab2:
                                 day_has_booking = True
                                 users_str = "、".join(usage_dict[day][room]["users"])
                                 name_display = f"<br><span style='color:gray; font-size:11px; line-height:1.2; display:block;'>👤 {users_str}</span>"
-                                
                                 display_name = room.replace("B114C-", "[B114C] ")
                                 
                                 if booked >= max_cap:
@@ -227,8 +241,13 @@ with tab2:
             df_data = []
             for r in reservations:
                 status_text = r.get("status")
+                cancelled = r.get("cancelled_dates") or ""
+                
                 if status_text == "已拒绝" and r.get("reject_reason") != "无":
                     status_text += f" (理由: {r['reject_reason']})"
+                if cancelled: # 如果有部分取消，在列表里给个提示
+                    status_text += f" [注: 已释放部分日期]"
+                    
                 df_data.append({
                     "当前状态": status_text,
                     "场地": r["room"],
@@ -276,20 +295,53 @@ with tab3:
                         st.rerun()
                 st.markdown("---")
                 
-        st.markdown("### 🗑️ 管理所有记录")
-        with st.expander("点击展开管理（可删除记录）"):
-            if not reservations:
-                st.write("暂无记录可管理。")
-            else:
-                for record in reservations:
-                    rec_id = record['id']
-                    col_info, col_btn = st.columns([4, 1])
-                    with col_info:
-                        st.write(f"[{record.get('status')}] **{record['user']}** ({record.get('phone', '未提供')}) - {record['room']} ({record['start_date']}至{record['end_date']})")
-                    with col_btn:
-                        if st.button("删除", key=f"del_{rec_id}"):
-                            delete_record(rec_id)
-                            st.rerun()
-                    st.markdown("---")
+        # 核心更新：可以针对特定日期取消的详细管理界面
+        st.markdown("### 🛠️ 记录管理与日期释放")
+        if not reservations:
+            st.write("暂无记录可管理。")
+        else:
+            for record in reservations:
+                rec_id = record['id']
+                
+                # 展开面板，每个记录一个独立的抽屉
+                with st.expander(f"[{record.get('status')}] {record['user']} - {record['room']} ({record['start_date']} 至 {record['end_date']})"):
+                    st.write(f"📞 联系电话: {record.get('phone', '未提供')} | 🕒 提交时间: {record['timestamp']}")
+                    
+                    # 生成该预约的所有日期列表
+                    try:
+                        rec_start_dt = datetime.strptime(record["start_date"], "%Y-%m-%d").date()
+                        rec_end_dt = datetime.strptime(record["end_date"], "%Y-%m-%d").date()
+                        
+                        date_list = []
+                        temp_d = rec_start_dt
+                        while temp_d <= rec_end_dt:
+                            date_list.append(temp_d.strftime("%Y-%m-%d"))
+                            temp_d += timedelta(days=1)
+                            
+                        # 获取已经取消的日期
+                        cancelled_str = record.get("cancelled_dates") or ""
+                        current_cancelled = [d.strip() for d in cancelled_str.split(",") if d.strip() and d.strip() in date_list]
+                        
+                        # 重点体验：提供一个多选框供管理员精确操作
+                        selected_to_cancel = st.multiselect(
+                            "🛑 释放特定日期（选中下方日期，该日期的名额将被释放重新开放）：",
+                            options=date_list,
+                            default=current_cancelled,
+                            key=f"cancel_dates_{rec_id}"
+                        )
+                        
+                        col_save, col_del = st.columns([1, 1])
+                        with col_save:
+                            if st.button("💾 保存日期释放设置", key=f"save_cancel_{rec_id}"):
+                                new_cancelled_str = ",".join(selected_to_cancel)
+                                update_cancelled_dates(rec_id, new_cancelled_str)
+                                st.success("特定日期释放成功！日历已同步更新。")
+                                st.rerun()
+                        with col_del:
+                            if st.button("🗑️ 彻底删除该整条记录", key=f"del_all_{rec_id}"):
+                                delete_record(rec_id)
+                                st.rerun()
+                    except:
+                        st.write("日期数据异常，无法展开详细管理。")
     elif pwd != "":
         st.error("密码错误！")
