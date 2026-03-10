@@ -98,18 +98,12 @@ with tab1:
         user_name = st.text_input("预约人姓名/课题组", placeholder="例如：张三 / 李四课题组")
         phone_number = st.text_input("联系手机号码 (必填)", placeholder="例如：13800138000") 
         
-        # 新增：两级联动选择场地，优化用户体验
-        st.markdown("**选择场地**")
-        location_type = st.radio("请先选择区域类别：", ["普通场地 (气候室/温室)", "B114C 房间培养架"], horizontal=True)
-        
-        if location_type == "普通场地 (气候室/温室)":
-            # 如果选普通场地，展示基础选项
-            room_choice = st.selectbox("选择具体场地：", list(BASE_ROOMS.keys()))
-        else:
-            # 如果选 B114C，展示培养架下拉菜单（支持键盘输入搜索）
-            selected_rack = st.selectbox("选择具体培养架（可输入数字搜索）：", b114c_racks_list)
-            # 在后台自动拼接成统一格式
-            room_choice = f"B114C-{selected_rack}"
+        # 核心修复：取消 radio，改为单一的可搜索下拉框
+        # ROOM_CAPACITIES.keys() 里已经包含了所有的场地和培养架
+        room_choice = st.selectbox(
+            "选择具体场地（💡 支持直接键盘打字搜索，如输入 '143'）：", 
+            list(ROOM_CAPACITIES.keys())
+        )
             
         dates = st.date_input("选择使用日期区间", [])
         
@@ -153,7 +147,7 @@ with tab1:
                         insert_record(new_record)
                         st.success(f"✅ 申请已提交！您预约了 【{room_choice}】，当前状态为【待审批】。")
                         st.rerun()
-
+                        
 # --- Tab 2: 预约状态与日历 ---
 with tab2:
     st.subheader("📅 当月余量及人员看板")
@@ -300,3 +294,4 @@ with tab3:
                     st.markdown("---")
     elif pwd != "":
         st.error("密码错误！")
+
