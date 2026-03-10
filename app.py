@@ -97,7 +97,7 @@ def check_user_quota(user_name, phone, req_start, req_end, data):
     return False, existing_days
 
 # --- 界面区 ---
-st.title("🌱 农生学院气候室预约系统")
+st.title("🌱 农生学院气候室及培养架在线预约系统")
 
 reservations = load_data()
 tab1, tab2, tab3 = st.tabs(["📝 提交预约", "📅 预约状态与日历", "👨‍💼 管理员后台"])
@@ -371,5 +371,3 @@ with tab3:
                         st.write("日期数据异常，无法展开详细管理。")
     elif pwd != "":
         st.error("密码错误！")
-
-
