@@ -15,7 +15,6 @@ BASE_ROOMS = {
     "工务署玻璃温室": 20
 }
 
-# 变量名修改为 B114A
 b114a_racks_list = [f"{i}号培养架" for i in range(1, 43)] + [
     "143号培养架", "155号培养架", "166号培养架", 
     "177号培养架", "188号培养架", "199号培养架", 
@@ -25,7 +24,6 @@ b114a_racks_list = [f"{i}号培养架" for i in range(1, 43)] + [
 ROOM_CAPACITIES = BASE_ROOMS.copy()
 RACK_CAPACITY = 1  
 for rack in b114a_racks_list:
-    # 场地前缀修改为 B114A
     ROOM_CAPACITIES[f"B114A-{rack}"] = RACK_CAPACITY
 
 # --- 数据库连接初始化 ---
@@ -47,9 +45,19 @@ def update_status(record_id, new_status, reason="无"):
 def delete_record(record_id):
     supabase.table("reservations").delete().eq("id", record_id).execute()
 
-# 新增：保存被单独取消的日期
 def update_cancelled_dates(record_id, cancelled_dates_str):
     supabase.table("reservations").update({"cancelled_dates": cancelled_dates_str}).eq("id", record_id).execute()
+
+# 🌟 新增：从数据库获取最新传感器数据的函数
+def get_latest_sensor_data(room_name):
+    try:
+        # 按照创建时间倒序排列，只取最新的一条数据
+        response = supabase.table("sensor_data").select("*").eq("room", room_name).order("created_at", desc=True).limit(1).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    except:
+        return None
 
 def check_capacity(room, req_start, req_end, data):
     current_date = req_start
@@ -59,11 +67,9 @@ def check_capacity(room, req_start, req_end, data):
         daily_count = 0
         for record in data:
             if record["room"] == room and record.get("status") in ["待审批", "已通过"]:
-                # 排除被管理员单独取消的日期
                 cancelled = record.get("cancelled_dates") or ""
                 if current_date.strftime("%Y-%m-%d") in cancelled:
                     continue
-                    
                 try:
                     rec_start = datetime.strptime(record["start_date"], "%Y-%m-%d").date()
                     rec_end = datetime.strptime(record["end_date"], "%Y-%m-%d").date()
@@ -88,7 +94,6 @@ def check_user_quota(user_name, phone, req_start, req_end, data):
                     rec_end = datetime.strptime(record["end_date"], "%Y-%m-%d").date()
                     curr_d = rec_start
                     while curr_d <= rec_end:
-                        # 动态计算天数时，扣除被取消的日期
                         if curr_d.strftime("%Y-%m-%d") not in cancelled:
                             existing_days += 1
                         curr_d += timedelta(days=1)
@@ -101,6 +106,33 @@ def check_user_quota(user_name, phone, req_start, req_end, data):
 # --- 界面区 ---
 st.title("🌱 农生学院气候室及培养架在线预约系统")
 
+# ==========================================
+# 🌟 新增：B114A 实时温湿度监控大屏
+# ==========================================
+sensor_data = get_latest_sensor_data("B114A")
+
+if sensor_data:
+    st.markdown("### 🌡️ B114A 培养室实时环境")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(label="📍 当前监测点位", value=sensor_data["room"])
+    with col2:
+        st.metric(label="🌡️ 实时温度", value=f"{sensor_data['temperature']} °C")
+    with col3:
+        st.metric(label="💧 实时湿度", value=f"{sensor_data['humidity']} %")
+        
+    # 处理国际标准时间，转换为北京时间显示
+    try:
+        utc_time = datetime.strptime(sensor_data['created_at'][:19], "%Y-%m-%dT%H:%M:%S")
+        local_time = utc_time + timedelta(hours=8)
+        time_str = local_time.strftime("%Y-%m-%d %H:%M:%S")
+    except:
+        time_str = sensor_data['created_at']
+        
+    st.caption(f"⏱️ 数据最后更新时间: {time_str} （设备每分钟自动上报）")
+    st.markdown("---")
+# ==========================================
+
 reservations = load_data()
 tab1, tab2, tab3 = st.tabs(["📝 提交预约", "📅 预约状态与日历", "👨‍💼 管理员后台"])
 
@@ -108,19 +140,17 @@ tab1, tab2, tab3 = st.tabs(["📝 提交预约", "📅 预约状态与日历", "
 with tab1:
     st.subheader("填写预约信息")
     
-    # 新增：预约成功后的悬停弹窗提示与下载按钮
     if st.session_state.get('show_download_prompt'):
         st.success(f"✅ 线上申请已提交！您预约了 【{st.session_state.get('last_booked_room')}】，当前状态为【待审批】。")
         st.info("⚠️ **下一步重要操作：**\n\n请务必下载下方的《预约申请表》，填写相关信息并签字后，提交至：\n\n**📍 1010办公室 彭宇涛 老师 （18996131636）**")
         
         try:
-            # 核心修改：这里改成了读取 .pdf 文件
             with open("application_form.pdf", "rb") as file:
                 st.download_button(
-                    label="⬇️ 点击下载《预约申请表》PDF版",  # 按钮文字更新
+                    label="⬇️ 点击下载《预约申请表》PDF版",  
                     data=file,
-                    file_name="农生学院气候室预约申请表.pdf",   # 下载后的文件名更新
-                    mime="application/pdf"                    # 文件识别码改为 PDF
+                    file_name="农生学院气候室预约申请表.pdf",   
+                    mime="application/pdf"                    
                 )
         except FileNotFoundError:
             st.error("⚠️ 提示：系统找不到 'application_form.pdf' 文件，请联系管理员确认是否已上传至后台。")
@@ -209,11 +239,10 @@ with tab2:
             try:
                 s_date = datetime.strptime(r["start_date"], "%Y-%m-%d").date()
                 e_date = datetime.strptime(r["end_date"], "%Y-%m-%d").date()
-                cancelled = r.get("cancelled_dates") or "" # 获取该记录被取消的日期
+                cancelled = r.get("cancelled_dates") or ""
                 
                 curr_d = s_date
                 while curr_d <= e_date:
-                    # 如果这一天没有被取消，才在日历上显示并计数
                     if curr_d.strftime("%Y-%m-%d") not in cancelled:
                         if curr_d.year == sel_year and curr_d.month == sel_month:
                             if r["room"] in usage_dict[curr_d.day]:
@@ -252,8 +281,6 @@ with tab2:
                                 day_has_booking = True
                                 users_str = "、".join(usage_dict[day][room]["users"])
                                 name_display = f"<br><span style='color:gray; font-size:11px; line-height:1.2; display:block;'>👤 {users_str}</span>"
-                                
-                                # 日历显示文本中的 B114C 修改为 B114A
                                 display_name = room.replace("B114A-", "[B114A] ")
                                 
                                 if booked >= max_cap:
@@ -275,7 +302,7 @@ with tab2:
                 
                 if status_text == "已拒绝" and r.get("reject_reason") != "无":
                     status_text += f" (理由: {r['reject_reason']})"
-                if cancelled: # 如果有部分取消，在列表里给个提示
+                if cancelled: 
                     status_text += f" [注: 已释放部分日期]"
                     
                 df_data.append({
@@ -325,7 +352,6 @@ with tab3:
                         st.rerun()
                 st.markdown("---")
                 
-        # 核心更新：可以针对特定日期取消的详细管理界面
         st.markdown("### 🛠️ 记录管理与日期释放")
         if not reservations:
             st.write("暂无记录可管理。")
@@ -333,11 +359,9 @@ with tab3:
             for record in reservations:
                 rec_id = record['id']
                 
-                # 展开面板，每个记录一个独立的抽屉
                 with st.expander(f"[{record.get('status')}] {record['user']} - {record['room']} ({record['start_date']} 至 {record['end_date']})"):
                     st.write(f"📞 联系电话: {record.get('phone', '未提供')} | 🕒 提交时间: {record['timestamp']}")
                     
-                    # 生成该预约的所有日期列表
                     try:
                         rec_start_dt = datetime.strptime(record["start_date"], "%Y-%m-%d").date()
                         rec_end_dt = datetime.strptime(record["end_date"], "%Y-%m-%d").date()
@@ -348,11 +372,9 @@ with tab3:
                             date_list.append(temp_d.strftime("%Y-%m-%d"))
                             temp_d += timedelta(days=1)
                             
-                        # 获取已经取消的日期
                         cancelled_str = record.get("cancelled_dates") or ""
                         current_cancelled = [d.strip() for d in cancelled_str.split(",") if d.strip() and d.strip() in date_list]
                         
-                        # 重点体验：提供一个多选框供管理员精确操作
                         selected_to_cancel = st.multiselect(
                             "🛑 释放特定日期（选中下方日期，该日期的名额将被释放重新开放）：",
                             options=date_list,
