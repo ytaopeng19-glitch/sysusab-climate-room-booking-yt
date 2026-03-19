@@ -48,16 +48,24 @@ def delete_record(record_id):
 def update_cancelled_dates(record_id, cancelled_dates_str):
     supabase.table("reservations").update({"cancelled_dates": cancelled_dates_str}).eq("id", record_id).execute()
 
-# 🌟 新增：从数据库获取最新传感器数据的函数
 def get_latest_sensor_data(room_name):
     try:
-        # 按照创建时间倒序排列，只取最新的一条数据
         response = supabase.table("sensor_data").select("*").eq("room", room_name).order("created_at", desc=True).limit(1).execute()
         if response.data:
             return response.data[0]
         return None
     except:
         return None
+
+# 🌟🌟🌟 新增：向云端发射开门指令的函数 🌟🌟🌟
+def trigger_door_unlock():
+    try:
+        # 将 device_control 表中 id 为 1 的 door_status 字段更新为 'OPEN'
+        supabase.table("device_control").update({"door_status": "OPEN"}).eq("id", 1).execute()
+        return True
+    except Exception as e:
+        st.error(f"发射指令失败: {e}")
+        return False
 
 def check_capacity(room, req_start, req_end, data):
     current_date = req_start
@@ -107,13 +115,14 @@ def check_user_quota(user_name, phone, req_start, req_end, data):
 st.title("🌱 农生学院气候室及培养架在线预约系统")
 
 # ==========================================
-# 🌟 新增：B114A 实时温湿度监控大屏
+# 🌟 B114A 实时温湿度监控与设备控制大屏
 # ==========================================
 sensor_data = get_latest_sensor_data("B114A")
 
 if sensor_data:
-    st.markdown("### 🌡️ B114A 培养室实时环境")
-    col1, col2, col3 = st.columns(3)
+    st.markdown("### 🌡️ B114A 培养室实时环境与门禁")
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1.5]) # 调整了列宽，给门禁按钮留出空间
+    
     with col1:
         st.metric(label="📍 当前监测点位", value=sensor_data["room"])
     with col2:
@@ -121,7 +130,15 @@ if sensor_data:
     with col3:
         st.metric(label="💧 实时湿度", value=f"{sensor_data['humidity']} %")
         
-    # 处理国际标准时间，转换为北京时间显示
+    # 🌟🌟🌟 新增：在监控数据旁边加上极其醒目的远程开门按钮 🌟🌟🌟
+    with col4:
+        st.markdown("<br>", unsafe_allow_html=True) # 稍微往下压一点，和温湿度对齐
+        if st.button("🚨 一键远程解锁 B114A 大门", type="primary", use_container_width=True):
+            success = trigger_door_unlock()
+            if success:
+                st.success("✅ 指令已送达！大门将解锁 5 秒。")
+                st.snow() # 加个小特效庆祝一下
+                
     try:
         utc_time = datetime.strptime(sensor_data['created_at'][:19], "%Y-%m-%dT%H:%M:%S")
         local_time = utc_time + timedelta(hours=8)
